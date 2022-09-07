@@ -1,7 +1,10 @@
-html,
-body,
-canvas {
+body {
     margin: 0;
-    width: 1200px;
-    height: 900px;
-}
+  }
+  canvas {
+    width: 600px;
+    height: 600px;
+    offset: 0;
+    cursor: none;
+  }
+  

@@ -1,163 +1,302 @@
-// Here I put my constants
-const MAX_RAYS = 100 // Max raymarching steps
-const MAX_DIST = 100.0 // Max distance for the rays
-const HIT_DIST = 0.01 // Distance at which ray is considered to be collided with an onbject
+"use strict";
 
-var canvas = document.getElementById("canvas");
-var canvasWidth = canvas.width;
-var canvasHeight = canvas.height;
-var ctx = canvas.getContext("2d");
-var canvasData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
-var time = 0;
+function main(shader) {
+    // Get A WebGL context
+    /** @type {HTMLCanvasElement} */
+    const canvas = document.querySelector("#canvas");
+    const gl = canvas.getContext("webgl");
+    if (!gl) {
+        return;
+    }
 
-function drawPixel(x, y, r, g, b, a) {
-    var index = (x + y * canvasWidth) * 4;
+    const vs = `
+    // an attribute will receive data from a buffer
+    attribute vec4 a_position;
 
-    canvasData.data[index + 0] = r;
-    canvasData.data[index + 1] = g;
-    canvasData.data[index + 2] = b;
-    canvasData.data[index + 3] = a;
+    // all shaders have a main function
+    void main() {
+
+      // gl_Position is a special variable a vertex shader
+      // is responsible for setting
+      gl_Position = a_position;
+    }
+  `;
+
+    const fs = `
+    precision highp float;
+    uniform vec2 camDir;
+    uniform vec3 camPos;
+    uniform float time;
+    #define MAX_STEPS 100
+    #define MAX_DIST 100.
+    #define SURF_DIST .01
+    #define ANGLE = 2
+    
+    bool IfSphere(vec3 p) {
+        vec4 s = vec4(0, 1, 6, 1);
+    
+        float sphereDist = length(p - s.xyz) - s.w;
+        float planeDist = p.y;
+    
+        return sphereDist < planeDist && sphereDist < SURF_DIST * 2.;
+    }
+    
+    float GetDist(vec3 p) {
+        vec4 s = vec4(0, 1, 6, 1);
+    
+        float sphereDist = length(p - s.xyz) - s.w;
+        float planeDist = p.y;
+    
+        float d = min(sphereDist, planeDist);
+        return d;
+    }
+    
+    vec3 GetNormal(vec3 p) {
+        float d = GetDist(p);
+        vec2 e = vec2(.01, 0);
+    
+        vec3 n = d - vec3(GetDist(p - e.xyy), GetDist(p - e.yxy), GetDist(p - e.yyx));
+    
+        return normalize(n);
+    }
+    
+    float RayMarch(vec3 ro, vec3 rd) {
+        float dO = 0.;
+    
+        for(int i = 0; i < MAX_STEPS; i++) {
+            vec3 p = ro + rd * dO;
+            float dS = GetDist(p);
+            dO += dS;
+            bool sphere = IfSphere(p);
+            if (sphere) {
+                rd = reflect(rd, GetNormal(p));
+                continue;
+            }
+            if(dO > MAX_DIST || dS < SURF_DIST) {
+                break;
+            }
+        }
+    
+        return dO;
+    }
+    
+    float GetLight(vec3 p) {
+        vec3 lightPos = vec3(0, 1, 0);
+        lightPos.xz += vec2(sin(time), cos(time)) * 2.;
+        vec3 l = normalize(lightPos - p);
+        vec3 n = GetNormal(p);
+    
+        float dif = clamp(dot(n, l), 0., 1.);
+        float d = RayMarch(p + n * SURF_DIST * 2., l);
+        if(d < length(lightPos - p))
+            dif *= .1;
+    
+        return dif;
+    }
+    
+    void main() {
+    
+        vec2 iResolution = vec2(600, 600);
+    
+        vec2 uv = (gl_FragCoord.xy - .5 * iResolution.xy) / iResolution.y;
+    
+        vec3 col = vec3(0);
+    
+        vec3 ro = camPos;
+        vec3 rd = normalize(vec3(uv.x, uv.y, 1));
+        float sens = 10.;
+        rd.xz *= mat2(cos(camDir.x * sens), -sin(camDir.x * sens), sin(camDir.x * sens), cos(camDir.x * sens));
+        rd.zy *= mat2(cos(camDir.y * sens), -sin(camDir.y * sens), sin(camDir.y * sens), cos(camDir.y * sens));
+
+    
+        float d = RayMarch(ro, rd);
+    
+        vec3 p = ro + rd * d;
+    
+        float dif = GetLight(p);
+        col = vec3(dif);
+    
+        col = pow(col, vec3(.4545));	// gamma correction
+    
+        gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+    // setup GLSL program
+    let vertexShader = createShader(gl, gl.VERTEX_SHADER, vs);
+    let fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fs);
+
+    let program = createProgram(gl, vertexShader, fragmentShader);
+
+    // look up where the vertex data needs to go.
+    const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
+    const timeAttributeLocation = gl.getUniformLocation(program, "time");
+    const camPositionAttributeLocation = gl.getUniformLocation(program, "camPos");
+    const camDirectionAttributeLocation = gl.getUniformLocation(program, "camDir");
+    // Create a buffer to put three 2d clip space points in
+    const positionBuffer = gl.createBuffer();
+
+    // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+    // fill it with a 2 triangles that cover clipspace
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        -1, -1,  // first triangle
+        1, -1,
+        -1, 1,
+        -1, 1,  // second triangle
+        1, -1,
+        1, 1,
+    ]), gl.STATIC_DRAW);
+
+    resizeCanvasToDisplaySize(gl.canvas);
+    canvas.width = canvas.clientWidth;
+    canvas.heigth = canvas.clientHeight;
+
+    // Tell WebGL how to convert from clip space to pixels
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+    // Tell it to use our program (pair of shaders)
+    gl.useProgram(program);
+
+    // Turn on the attribute
+    gl.enableVertexAttribArray(positionAttributeLocation);
+
+    // Bind the position buffer.
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+    // Tell the attribute how to get data out of positionBuffer (ARRAY_BUFFER)
+    gl.vertexAttribPointer(
+        positionAttributeLocation,
+        2,          // 2 components per iteration
+        gl.FLOAT,   // the data is 32bit floats
+        false,      // don't normalize the data
+        0,          // 0 = move forward size * sizeof(type) each iteration to get the next position
+        0,          // start at the beginning of the buffer
+    );
+
+    drawFrame(gl);
+
+    var fps = 60;
+
+    var intervalID = window.setInterval(animate, 1000 / fps);
+    var time = 0;
+    var camPos = [0.0, 1.0, 0.0];
+    var vsd = [false, false, false, false, false, false]; // w s a d crtl shift
+    var cursorPos = [0.0, 0.0];
+    var camDir = [0.0, 0.0]; // x y angles
+    var sensitiveness = 0.001;
+    gl.uniform3f(camPositionAttributeLocation, camPos[0], camPos[1], camPos[2]);
+    gl.uniform2f(camDirectionAttributeLocation, camDir[0], camDir[1]);
+    function animate() {
+        gl.uniform1f(timeAttributeLocation, time);
+
+        document.onkeydown = function (e) {
+            switch (e.code) {
+                case "KeyW": vsd[0] = true; break;
+                case "KeyS": vsd[1] = true; break;
+                case "KeyA": vsd[2] = true; break;
+                case "KeyD": vsd[3] = true; break;
+                case "ControlLeft": vsd[4] = true; break;
+                case "ShiftLeft": vsd[5] = true; break;
+            }
+        };
+        document.onkeyup = function (e) {
+            switch (e.code) {
+                case "KeyW": vsd[0] = false; break;
+                case "KeyS": vsd[1] = false; break;
+                case "KeyA": vsd[2] = false; break;
+                case "KeyD": vsd[3] = false; break;
+                case "ControlLeft": vsd[4] = false; break;
+                case "ShiftLeft": vsd[5] = false; break;
+            }
+        };
+        var speed = 0.1;
+        var temp = [0.0, 0.0, 1.0]
+        if (vsd[0]) {
+            camPos[2] += Math.cos(camDir[0] * 10.) * speed;
+            camPos[0] -= Math.sin(camDir[0] * 10.) * speed;
+        }
+        if (vsd[1]) camPos[2] -= 0.1;
+        if (vsd[2]) camPos[0] -= 0.1;
+        if (vsd[3]) camPos[0] += 0.1;
+        if (vsd[4]) camPos[1] -= 0.1;
+        if (vsd[5]) camPos[1] += 0.1;
+
+        document.onmousemove = function (e) {
+            camDir[0] += (e.clientX - cursorPos[0]) * sensitiveness;
+            camDir[1] += (e.clientY - cursorPos[1]) * sensitiveness;
+            cursorPos[0] = e.clientX; 
+            cursorPos[1] = e.clientY; 
+        };
+        gl.uniform2f(camDirectionAttributeLocation, camDir[0], camDir[1]);
+
+        gl.uniform3f(camPositionAttributeLocation, camPos[0], camPos[1], camPos[2]);
+        drawFrame(gl);
+        time += 0.01;
+    }
 }
 
-function updateCanvas() {
-    ctx.putImageData(canvasData, 0, 0);
+function drawFrame(gl) {
+    gl.drawArrays(
+        gl.TRIANGLES,
+        0,     // offset
+        6,     // num vertices to process
+    );
 }
 
-const Vec2 = function (x=0, y=0) {
-    if( x.type === 'vec2' ) return x  
-    const v = Object.create( Vec2.prototype )
-    if( Array.isArray( x ) ) {
-      v.x = x[0]; v.y = x[1]; 
-    } else if( y === undefined ) {
-      v.x = v.y = x
-    }else{
-      v.x = x; v.y = y; 
+function normalize(camDir) {
+    for (var i = 0; i < camDir.length; i++) {
+        if (camDir[i] < 0.001) camDir[i] = 0;
     }
-  
-    return v
-  }
-  
-  Vec2.prototype = {
-    type: 'vec2',
-      emit() { return "vec2(" + this.x + "," + this.y + ")" },
-    emit_decl() { return ""; },
-    copy() {
-      return Vec2( this.x, this.y )
-    }
-  }
-
-class vec3 {
-    constructor(x, y, z) {
-        this.x = parseFloat(x);
-        this.y = parseFloat(y);
-        this.z = parseFloat(z);
-    }
-    normalize() {
-        var m = vec_length(this);
-        if (m > 0) {
-            return new vec3(this.x / m, this.y / m, this.z / m);
+    let len = Math.sqrt(camDir[0] ** 2 + camDir[1] ** 2 + camDir[2] ** 2);
+    if (len < 1) {
+        for (var i = 0; i < camDir.length; i++) {
+            camDir[i] *= 2;
         }
     }
-    multiplyByN(a) {
-        return new vec3(this.x * a, this.y * a, this.z * a);
+    camDir[0] /= len;
+    camDir[1] /= len;
+    camDir[2] /= len;
+    return camDir;
+}
+
+function createShader(gl, type, source) {
+    let shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    let success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+    if (success) {
+        return shader;
     }
+    console.log(gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
 }
 
-function sum(a, b) {
-    return new vec3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-function substract(a, b) {
-    return new vec3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-function substractVec3FromNum(a, b) {
-    return new vec3(a - b.x, a - b.y, a - b.z);
-}
-
-class vec4 {
-    constructor(x, y, z, w) {
-        this.x = parseFloat(x);
-        this.y = parseFloat(y);
-        this.z = parseFloat(z);
-        this.w = parseFloat(w);
-    }
-    xyz() {
-        return new vec3(this.x, this.y, this.z);
-    }
-}
-
-function vec_length(x) {
-    return Math.sqrt(x.x * x.x + x.y * x.y + x.z * x.z);
-}
-
-function dot(a, b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-function getDist(p) {
-    var s = new vec4(0, 1, 6, 1);
-
-    var sphereDist = vec_length(substract(p, s.xyz())) - s.w;
-    var planeDist = p.y;
-
-    d = Math.min(sphereDist, planeDist);
-    return d;
-}
-
-function getNormal(p) {
-    var d = getDist(p);
-    var acc = 0.01;
-
-    var n = substractVec3FromNum(d, new vec3(
-        getDist(substract(p, new vec3(acc, 0, 0))),
-        getDist(substract(p, new vec3(0, acc, 0))),
-        getDist(substract(p, new vec3(0, 0, acc)))
-    ));
-
-    return n.normalize();
-}
-
-function getLight(p) {
-    var lightPos = new vec3(3, 5, 2);
-    var l = substract(lightPos, p).normalize();
-    var n = getNormal(p);
-    var dif = dot(n, l);
-    var d = rayMarch(sum(p, n.multiplyByN(0.1)), l);
-    if (d < vec_length(substract(lightPos, p))) {
-        dif *= 0.1
-    }
-    return dif;
-}
-
-function rayMarch(ro, rd) {
-    var dO = 0.0;
-
-    for (let i = 0; i < MAX_RAYS; i++) {
-        var p = sum(ro, rd.multiplyByN(dO));
-        var dS = getDist(p);
-        dO += dS;
-        if (dO > MAX_DIST || dS < HIT_DIST) break;
+function createProgram(gl, vertexShader, fragmentShader) {
+    let program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    let success = gl.getProgramParameter(program, gl.LINK_STATUS);
+    if (success) {
+        return program;
     }
 
-    return dO;
+    console.log(gl.getProgramInfoLog(program));
+    gl.deleteProgram(program);
 }
 
-function render() {
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight)
-    var ro = new vec3(0, 1, 1);
-    for (let x = 0; x < canvasWidth; x++) {
-        for (let y = 0; y < canvasHeight; y++) {
-            var rd = new vec3((x - canvasWidth / 2) / canvasWidth, -(y - canvasHeight / 2) / canvasWidth, 1).normalize();
-            var d = rayMarch(ro, rd)
-            var p = sum(ro, rd.multiplyByN(d));
-            var col = getLight(p) * 256;
-            drawPixel(x, y, col, col, col, 256.0);
-        }
+function resizeCanvasToDisplaySize(canvas, multiplier) {
+    multiplier = multiplier || 1;
+    const width = canvas.clientWidth * multiplier | 0;
+    const height = canvas.clientHeight * multiplier | 0;
+    if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        return true;
     }
-    updateCanvas();
+    return false;
 }
 
-(function () {
-    render();
-})();
+main();
