@@ -30,7 +30,6 @@ function main(shader) {
     #define MAX_STEPS 100
     #define MAX_DIST 100.
     #define SURF_DIST .01
-    #define ANGLE = 2
     
     bool IfSphere(vec3 p) {
         vec4 s = vec4(0, 1, 6, 1);
@@ -42,7 +41,7 @@ function main(shader) {
     }
     
     float GetDist(vec3 p) {
-        vec4 s = vec4(0, 1, 6, 1);
+        vec4 s = vec4(0, 4, 6, 1);
     
         float sphereDist = length(p - s.xyz) - s.w;
         float planeDist = p.y;
@@ -67,11 +66,11 @@ function main(shader) {
             vec3 p = ro + rd * dO;
             float dS = GetDist(p);
             dO += dS;
-            bool sphere = IfSphere(p);
-            if (sphere) {
-                rd = reflect(rd, GetNormal(p));
-                continue;
-            }
+            // bool sphere = IfSphere(p);
+            // if (sphere) {
+            //     rd = reflect(rd, GetNormal(p));
+            //     continue;
+            // }
             if(dO > MAX_DIST || dS < SURF_DIST) {
                 break;
             }
@@ -103,10 +102,34 @@ function main(shader) {
         vec3 col = vec3(0);
     
         vec3 ro = camPos;
-        vec3 rd = normalize(vec3(uv.x, uv.y, 1));
         float sens = 10.;
-        rd.xz *= mat2(cos(camDir.x * sens), -sin(camDir.x * sens), sin(camDir.x * sens), cos(camDir.x * sens));
-        rd.zy *= mat2(cos(camDir.y * sens), -sin(camDir.y * sens), sin(camDir.y * sens), cos(camDir.y * sens));
+
+        vec3 lookat = vec3(0., 0., 1.);
+
+        lookat.xz *= mat2(cos(camDir.x * sens), -sin(camDir.x * sens), sin(camDir.x * sens), cos(camDir.x * sens));
+
+        float vang = camDir.y;
+
+        if (vang > 3.14 / 2.) vang = 3.14 / 2.;
+        if (vang < -3.14 / 2.) vang = -3.14 / 2.;
+
+        vec3 camRot = vec3(lookat.x, lookat.y, lookat.z);
+        lookat.y = camRot.y * cos(vang) + pow(pow(camRot.x, 2.) + pow(camRot.z, 2.), 0.5) * sin(vang);
+        float len = pow(pow(camRot.x, 2.) + pow(camRot.z, 2.), 0.5) * cos(vang) - camRot.y * sin(vang);
+        lookat.x = camRot.x / pow(pow(camRot.x, 2.) + pow(camRot.z, 2.), 0.5) * len;
+        lookat.z = camRot.z / pow(pow(camRot.x, 2.) + pow(camRot.z, 2.), 0.5) * len;
+
+        lookat += ro;
+    
+        float zoom = 1.;
+        
+        vec3 f = normalize(lookat-ro);
+        vec3 r = normalize(cross(vec3(0., 1., 0.), f));
+        vec3 u = cross(f, r);
+        
+        vec3 c = ro + f*zoom;
+        vec3 i = c + uv.x*r + uv.y*u;
+        vec3 rd = i-ro;
 
     
         float d = RayMarch(ro, rd);
@@ -183,11 +206,45 @@ function main(shader) {
     var time = 0;
     var camPos = [0.0, 1.0, 0.0];
     var vsd = [false, false, false, false, false, false]; // w s a d crtl shift
-    var cursorPos = [0.0, 0.0];
     var camDir = [0.0, 0.0]; // x y angles
     var sensitiveness = 0.001;
+    var curX = 0, curY = 0;
+    let sens = 10;
     gl.uniform3f(camPositionAttributeLocation, camPos[0], camPos[1], camPos[2]);
     gl.uniform2f(camDirectionAttributeLocation, camDir[0], camDir[1]);
+
+    canvas.requestPointerLock = canvas.requestPointerLock ||
+        canvas.mozRequestPointerLock;
+
+    document.exitPointerLock = document.exitPointerLock ||
+        document.mozExitPointerLock;
+
+    canvas.onclick = function () {
+        canvas.requestPointerLock();
+    };
+
+    // pointer lock event listeners
+
+    // Hook pointer lock state change events for different browsers
+    document.addEventListener('pointerlockchange', lockChangeAlert, false);
+    document.addEventListener('mozpointerlockchange', lockChangeAlert, false);
+
+    function lockChangeAlert() {
+        if (document.pointerLockElement === canvas ||
+            document.mozPointerLockElement === canvas) {
+            console.log('The pointer lock status is now locked');
+            document.addEventListener("mousemove", updatePosition, false);
+        } else {
+            console.log('The pointer lock status is now unlocked');
+            document.removeEventListener("mousemove", updatePosition, false);
+        }
+    }
+
+    function updatePosition(e) {
+        curX = e.movementX;
+        curY += e.movementY;
+    }
+
     function animate() {
         gl.uniform1f(timeAttributeLocation, time);
 
@@ -212,24 +269,34 @@ function main(shader) {
             }
         };
         var speed = 0.1;
-        var temp = [0.0, 0.0, 1.0]
         if (vsd[0]) {
-            camPos[2] += Math.cos(camDir[0] * 10.) * speed;
-            camPos[0] -= Math.sin(camDir[0] * 10.) * speed;
+            camPos[2] += Math.cos(-camDir[0] * 10.) * speed;
+            camPos[0] -= Math.sin(-camDir[0] * 10.) * speed;
         }
-        if (vsd[1]) camPos[2] -= 0.1;
-        if (vsd[2]) camPos[0] -= 0.1;
-        if (vsd[3]) camPos[0] += 0.1;
+        if (vsd[1]) {
+            camPos[2] += Math.cos(-camDir[0] * 10. + Math.PI) * speed;
+            camPos[0] -= Math.sin(-camDir[0] * 10. + Math.PI) * speed;
+        }
+        if (vsd[2]) {
+            camPos[2] += Math.cos(-camDir[0] * 10. + Math.PI / 2) * speed;
+            camPos[0] -= Math.sin(-camDir[0] * 10. + Math.PI / 2) * speed;
+        }
+        if (vsd[3]) {
+            camPos[2] += Math.cos(-camDir[0] * 10. + Math.PI * 1.5) * speed;
+            camPos[0] -= Math.sin(-camDir[0] * 10. + Math.PI * 1.5) * speed;
+        }
         if (vsd[4]) camPos[1] -= 0.1;
         if (vsd[5]) camPos[1] += 0.1;
 
         document.onmousemove = function (e) {
-            camDir[0] += (e.clientX - cursorPos[0]) * sensitiveness;
-            camDir[1] += (e.clientY - cursorPos[1]) * sensitiveness;
-            cursorPos[0] = e.clientX; 
-            cursorPos[1] = e.clientY; 
+            camDir[0] += curX * sensitiveness;
+            camDir[1] += curY * sensitiveness * sens;
+            if (camDir[1] > Math.PI / 2) camDir[1] = Math.PI / 2;
+            if (camDir[1] < -Math.PI / 2) camDir[1] = -Math.PI / 2;
+            console.log(camDir[1]);
+            curX = 0, curY = 0;
         };
-        gl.uniform2f(camDirectionAttributeLocation, camDir[0], camDir[1]);
+        gl.uniform2f(camDirectionAttributeLocation, -camDir[0], -camDir[1]);
 
         gl.uniform3f(camPositionAttributeLocation, camPos[0], camPos[1], camPos[2]);
         drawFrame(gl);
