@@ -27,70 +27,72 @@ function main(shader) {
     uniform vec2 camDir;
     uniform vec3 camPos;
     uniform float time;
-    #define MAX_STEPS 100
-    #define MAX_DIST 100.
-    #define SURF_DIST .01
-    
-    bool IfSphere(vec3 p) {
-        vec4 s = vec4(0, 1, 6, 1);
-    
-        float sphereDist = length(p - s.xyz) - s.w;
-        float planeDist = p.y;
-    
-        return sphereDist < planeDist && sphereDist < SURF_DIST * 2.;
+    #define MAX_DIST 100000.
+
+    vec2 boxIntersection(in vec3 ro, in vec3 rd, vec3 boxSize, out vec3 outNormal){
+        vec3 m = 1.0/rd; // can precompute if traversing a set of aligned boxes
+        vec3 n = m*ro;   // can precompute if traversing a set of aligned boxes
+        vec3 k = abs(m)*boxSize;
+        vec3 t1 = -n - k;
+        vec3 t2 = -n + k;
+        float tN = max( max( t1.x, t1.y ), t1.z );
+        float tF = min( min( t2.x, t2.y ), t2.z );
+        if( tN>tF || tF<0.0) return vec2(-1.0); // no intersection
+        outNormal = -sign(rd)*step(t1.yzx,t1.xyz)*step(t1.zxy,t1.xyz);
+        return vec2(tN, tF);
     }
-    
-    float GetDist(vec3 p) {
-        vec4 s = vec4(0, 4, 6, 1);
-    
-        float sphereDist = length(p - s.xyz) - s.w;
-        float planeDist = p.y;
-    
-        float d = min(sphereDist, planeDist);
-        return d;
+
+    vec2 sphIntersect(in vec3 ro, in vec3 rd, float ra) {
+        float b = dot(ro, rd);
+        float c = dot(ro, ro) - ra * ra;
+        float h = b * b - c;
+        if(h < 0.0) return vec2(-1.0);
+        h = sqrt(h);
+        return vec2(-b - h, -b + h);
     }
-    
-    vec3 GetNormal(vec3 p) {
-        float d = GetDist(p);
-        vec2 e = vec2(.01, 0);
-    
-        vec3 n = d - vec3(GetDist(p - e.xyy), GetDist(p - e.yxy), GetDist(p - e.yyx));
-    
-        return normalize(n);
+
+    vec2 plaIntersect(in vec3 ro, in vec3 rd, in vec4 p) {
+        return vec2(-(dot(ro,p.xyz)+p.w)/dot(rd,p.xyz));
     }
-    
-    float RayMarch(vec3 ro, vec3 rd) {
-        float dO = 0.;
-    
-        for(int i = 0; i < MAX_STEPS; i++) {
-            vec3 p = ro + rd * dO;
-            float dS = GetDist(p);
-            dO += dS;
-            // bool sphere = IfSphere(p);
-            // if (sphere) {
-            //     rd = reflect(rd, GetNormal(p));
-            //     continue;
-            // }
-            if(dO > MAX_DIST || dS < SURF_DIST) {
-                break;
-            }
+
+    bool minDist(vec2 d1, vec2 d2) {
+        return d2.x > 0. && d1.x > d2.x;
+    }
+
+    vec2 map(in vec3 ro, in vec3 rd, out vec3 n) {
+        vec2 d;
+        vec3 tempN;
+        vec2 minD = vec2(MAX_DIST);
+
+        vec3 planeN = vec3(0., 1., 0.);
+        d = plaIntersect(ro, rd, vec4(planeN, 1.));
+        if (minDist(minD, d)) {
+            minD = d;
+            n = planeN;
         }
-    
-        return dO;
+
+        d = sphIntersect(ro - vec3(0., 0., 4.), rd, 1.);
+        if (minDist(minD, d)) {
+            minD = d;
+            n = normalize(ro + rd * d.x - vec3(0., 0., 4.));
+        }
+
+        d = boxIntersection(ro - vec3(4., 0., 5.), rd, vec3(1.), tempN);
+        if (minDist(minD, d)) {
+            minD = d;
+            n = tempN;
+        }
+        return minD;
     }
     
-    float GetLight(vec3 p) {
-        vec3 lightPos = vec3(0, 1, 0);
-        lightPos.xz += vec2(sin(time), cos(time)) * 2.;
-        vec3 l = normalize(lightPos - p);
-        vec3 n = GetNormal(p);
-    
-        float dif = clamp(dot(n, l), 0., 1.);
-        float d = RayMarch(p + n * SURF_DIST * 2., l);
-        if(d < length(lightPos - p))
-            dif *= .1;
-    
-        return dif;
+    vec3 traceRay(vec3 ro, vec3 rd) {
+        vec3 n;
+        vec2 d = map(ro, rd, n);
+        vec3 light = -normalize(vec3(-0.5, -1., -0.75));
+        if (d.x < 0.0 || d.x == MAX_DIST) return vec3(0.31, 0.63, 0.98) + vec3(pow(max(dot(rd, light), 0.), 64.));
+        vec3 p = ro + rd * d.x;
+        float diffuse = max(dot(n, light), 0.);
+        return vec3(diffuse);
     }
     
     void main() {
@@ -106,6 +108,7 @@ function main(shader) {
 
         vec3 lookat = vec3(0., 0., 1.);
 
+        lookat.yx *= mat2(cos(camDir.y * sens), -sin(camDir.y * sens), sin(camDir.y * sens), cos(camDir.y * sens));
         lookat.xz *= mat2(cos(camDir.x * sens), -sin(camDir.x * sens), sin(camDir.x * sens), cos(camDir.x * sens));
 
         float vang = camDir.y;
@@ -131,13 +134,7 @@ function main(shader) {
         vec3 i = c + uv.x*r + uv.y*u;
         vec3 rd = i-ro;
 
-    
-        float d = RayMarch(ro, rd);
-    
-        vec3 p = ro + rd * d;
-    
-        float dif = GetLight(p);
-        col = vec3(dif);
+        col = traceRay(ro, normalize(rd));
     
         col = pow(col, vec3(.4545));	// gamma correction
     
@@ -293,7 +290,6 @@ function main(shader) {
             camDir[1] += curY * sensitiveness * sens;
             if (camDir[1] > Math.PI / 2) camDir[1] = Math.PI / 2;
             if (camDir[1] < -Math.PI / 2) camDir[1] = -Math.PI / 2;
-            console.log(camDir[1]);
             curX = 0, curY = 0;
         };
         gl.uniform2f(camDirectionAttributeLocation, -camDir[0], -camDir[1]);
