@@ -27,7 +27,8 @@ function main(shader) {
     uniform vec2 camDir;
     uniform vec3 camPos;
     uniform float time;
-    #define MAX_DIST 100000.
+    #define MAX_DIST 10000.
+    #define CORRECTION .0001
     #define MAX_REF 40
     vec3 light = -normalize(vec3(-0.5, -1., -0.75));
 
@@ -61,44 +62,66 @@ function main(shader) {
         return d2.x > 0. && d1.x > d2.x;
     }
 
+    void rayMat(out vec3 ro, out vec3 rd, vec3 n, vec2 d, out vec3 col, vec4 mat) {
+        if (d.x == MAX_DIST || d.x == -1.) return;
+        if (mat.a == -1.) {
+            col *= mat.rgb;
+            ro += rd * (d.x - CORRECTION);
+            rd = reflect(rd, n);
+        } else if (mat.a == -2.) {
+            col *= mat.rgb;
+            float coef = 1.1;
+            if (d.x > d.y) {
+                ro += rd * (d.x + CORRECTION);
+                rd = refract(rd, n, coef);
+            } else {
+                ro += rd * (d.y + CORRECTION);
+                rd = refract(rd, n, 2. - coef);
+            }
+        }
+    }
+
     vec2 map(out vec3 ro, out vec3 rd, out vec3 col) {
         vec2 d;
         vec3 tempN;
         vec3 n;
+        vec4 mat, tempMat;
         vec2 minD = vec2(MAX_DIST);
 
         vec3 planeN = vec3(0., 1., 0.);
         d = plaIntersect(ro, rd, vec4(planeN, 1.));
+        tempMat = vec4(.1, .1, .1, -1.);
         if (minDist(minD, d)) {
+            mat = tempMat;
             minD = d;
             n = planeN;
         }
 
         d = sphIntersect(ro - vec3(0., 0., 4.), rd, 1.);
+        tempMat = vec4(.65, .8, .47, -2.);
         if (minDist(minD, d)) {
+            mat = tempMat;
             minD = d;
             n = normalize(ro + rd * d.x - vec3(0., 0., 4.));
         }
 
         d = boxIntersection(ro - vec3(4., 1., 5.), rd, vec3(1.), tempN);
+        tempMat = vec4(.65, .3, .47, -1.);
         if (minDist(minD, d)) {
+            mat = tempMat;
             minD = d;
             n = tempN;
         }
 
         d = boxIntersection(ro - vec3(8., 1., 5.), rd, vec3(1.), tempN);
+        tempMat = vec4(.65, .3, .47, -1.);
         if (minDist(minD, d)) {
+            mat = tempMat;
             minD = d;
             n = tempN;
         }
 
-        vec3 p = ro + rd * minD.x;
-         
-        if (minD.x != MAX_DIST) {
-            col *= 0.7;
-            ro += rd * (minD.x - 0.01);
-            rd = reflect(rd, n);
-        }
+        rayMat(ro, rd, n, minD, col, mat);
 
         return minD;
     }
