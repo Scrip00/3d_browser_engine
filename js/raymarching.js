@@ -28,6 +28,8 @@ function main(shader) {
     uniform vec3 camPos;
     uniform float time;
     #define MAX_DIST 100000.
+    #define MAX_REF 40
+    vec3 light = -normalize(vec3(-0.5, -1., -0.75));
 
     vec2 boxIntersection(in vec3 ro, in vec3 rd, vec3 boxSize, out vec3 outNormal){
         vec3 m = 1.0/rd; // can precompute if traversing a set of aligned boxes
@@ -59,9 +61,10 @@ function main(shader) {
         return d2.x > 0. && d1.x > d2.x;
     }
 
-    vec2 map(in vec3 ro, in vec3 rd, out vec3 n) {
+    vec2 map(out vec3 ro, out vec3 rd, out vec3 col) {
         vec2 d;
         vec3 tempN;
+        vec3 n;
         vec2 minD = vec2(MAX_DIST);
 
         vec3 planeN = vec3(0., 1., 0.);
@@ -77,22 +80,42 @@ function main(shader) {
             n = normalize(ro + rd * d.x - vec3(0., 0., 4.));
         }
 
-        d = boxIntersection(ro - vec3(4., 0., 5.), rd, vec3(1.), tempN);
+        d = boxIntersection(ro - vec3(4., 1., 5.), rd, vec3(1.), tempN);
         if (minDist(minD, d)) {
             minD = d;
             n = tempN;
         }
+
+        d = boxIntersection(ro - vec3(8., 1., 5.), rd, vec3(1.), tempN);
+        if (minDist(minD, d)) {
+            minD = d;
+            n = tempN;
+        }
+
+        vec3 p = ro + rd * minD.x;
+         
+        if (minD.x != MAX_DIST) {
+            col *= 0.7;
+            ro += rd * (minD.x - 0.01);
+            rd = reflect(rd, n);
+        }
+
         return minD;
     }
+
+    vec3 getSky(in vec3 rd) {
+        return vec3(0.31, 0.63, 0.98) + vec3(pow(max(dot(rd, light), 0.), 64.));
+    }
     
-    vec3 traceRay(vec3 ro, vec3 rd) {
+    vec3 traceRay(in vec3 ro, in vec3 rd) {
+        vec3 col = vec3(1.);
         vec3 n;
-        vec2 d = map(ro, rd, n);
-        vec3 light = -normalize(vec3(-0.5, -1., -0.75));
-        if (d.x < 0.0 || d.x == MAX_DIST) return vec3(0.31, 0.63, 0.98) + vec3(pow(max(dot(rd, light), 0.), 64.));
-        vec3 p = ro + rd * d.x;
-        float diffuse = max(dot(n, light), 0.);
-        return vec3(diffuse);
+        vec2 d;
+        for (int i = 0; i < MAX_REF; i++) {
+            d = map(ro, rd, col);
+            if (d.x < 0.0 || d.x == MAX_DIST) return getSky(rd) * col;
+        }
+        return col;
     }
     
     void main() {
