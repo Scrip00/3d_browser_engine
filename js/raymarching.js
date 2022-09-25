@@ -10,10 +10,11 @@ uniform sampler2D u_texture;
 uniform vec2 camDir;
 uniform vec3 camPos;
 uniform float time;
+uniform float randF;
 uniform bool isMoving;
 uniform float sampleFrames;
 #define MAX_DIST 1000.
-#define CORRECTION .01
+#define CORRECTION .0001
 #define MAX_REF 100
 vec3 light = -normalize(vec3(-0.5, -1., -0.75));
 
@@ -45,12 +46,52 @@ vec2 plaIntersect(in vec3 ro, in vec3 rd, in vec4 p) {
   return vec2(-(dot(ro, p.xyz) + p.w) / dot(rd, p.xyz));
 }
 
+float mbintersect(vec3 pos) { // Credits to iq https://www.shadertoy.com/view/ltfSWn
+  float Power = 3.0 + 4.0 * (sin(2.0 / 30.0) + 1.0);
+  vec3 z = pos;
+  float dr = 1.0;
+  float r = 0.0;
+  for(int i = 0; i < 64; i++) {
+    r = length(z);
+    if(r > 1.5)
+      break;
+
+		// convert to polar coordinates
+    float theta = acos(z.z / r);
+    float phi = atan(z.y, z.x);
+    dr = pow(r, Power - 1.0) * Power * dr + 1.0;
+
+		// scale and rotate the point
+    float zr = pow(r, Power);
+    theta = theta * Power;
+    phi = phi * Power;
+
+		// convert back to cartesian coordinates
+    z = zr * vec3(sin(theta) * cos(phi), sin(phi) * sin(theta), cos(theta));
+    z += pos;
+  }
+  return 0.5 * log(r) * r / dr;
+}
+
+vec3 nor(in vec3 pos) {
+  float dist = mbintersect(pos);
+  vec3 xDir = vec3(dist, 0, 0);
+  vec3 yDir = vec3(0, dist, 0);
+  vec3 zDir = vec3(0, 0, dist);
+  return normalize(vec3(mbintersect(pos + xDir), mbintersect(pos + yDir), mbintersect(pos + zDir)) - vec3(dist));
+}
+
 bool minDist(vec2 d1, vec2 d2) {
   return d2.x > 0. && d1.x > d2.x;
 }
 
-float random(vec2 st) {
-  return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+float random(vec2 co) {
+  highp float a = 12.9898;
+  highp float b = 78.233;
+  highp float c = 43758.5453;
+  highp float dt = dot(co.xy, vec2(a, b));
+  highp float sn = mod(dt, 3.14);
+  return fract(sin(sn) * c);
 }
 
 vec3 rand(vec2 st) {
@@ -79,7 +120,7 @@ void rayMat(out vec3 ro, out vec3 rd, vec3 n, vec2 d, out vec3 col, vec4 mat, fl
       ro += rd * (d.x + CORRECTION);
       rd = refract(rd, n, coef);
     } else {
-      if(random(vec2(ro.x + randN + time, ro.y + randN + time)) > dot(n, -rd)) {
+      if(random(vec2(ro.x + randN + time + randF, ro.y + randN + time + randF)) > pow(dot(n, -rd), .2)) {
         ro += rd * (d.x - CORRECTION);
         rd = reflect(rd, n);
       } else {
@@ -90,12 +131,12 @@ void rayMat(out vec3 ro, out vec3 rd, vec3 n, vec2 d, out vec3 col, vec4 mat, fl
   } else if(mat.a >= 0. && mat.a <= 1.) {
     col *= mat.rgb;
     ro += rd * (d.x - CORRECTION);
-    vec3 diff = rand(vec2(ro.x + randN + time, ro.y + randN + time));
+    vec3 diff = normalize(rand(vec2(ro.x + rd.x + randN + time + randF, ro.y + rd.y + randN + time + randF)));
     diff = normalize(diff * dot(diff, n));
     vec3 reflect = reflect(rd, n);
     rd = mix(diff, reflect, mat.a);
-  } else if(mat.a == -3.) {
-    col *= mat.rgb;
+  } else if(mat.a <= -3.) {
+    col *= mat.rgb * (-mat.a * 0.001);
     rd.x = -2.;
   }
 }
@@ -108,45 +149,95 @@ vec2 map(out vec3 ro, out vec3 rd, out vec3 col, int rand) {
   vec2 minD = vec2(MAX_DIST);
 
   vec3 planeN = vec3(0., 1., 0.);
-  d = plaIntersect(ro, rd, vec4(planeN, 1.));
-  tempMat = vec4(1., .8, .8, 0.1);
+  d = plaIntersect(ro, rd, vec4(planeN, .01));
+  tempMat = vec4(.8, .8, .8, .01);
   if(minDist(minD, d)) {
     mat = tempMat;
     minD = d;
     n = planeN;
   }
 
-  d = sphIntersect(ro - vec3(0., 0., 4.), rd, 1.);
-  tempMat = vec4(.8, .1, .1, -3.);
+  d = boxIntersection(ro - vec3(-4., 0., 0.), rd, vec3(0.1, 10., 11.), tempN);
+  tempMat = vec4(.87, .20, .0, .01);
   if(minDist(minD, d)) {
     mat = tempMat;
     minD = d;
-    n = normalize(ro + rd * d.x - vec3(0., 0., 4.));
+    n = tempN;
   }
 
-  d = sphIntersect(ro - vec3(1., 0., 2.), rd, 1.);
+  d = boxIntersection(ro - vec3(4., 0., 0.), rd, vec3(0.1, 10., 11.), tempN);
+  tempMat = vec4(.2, .3, .7, .01);
+  if(minDist(minD, d)) {
+    mat = tempMat;
+    minD = d;
+    n = tempN;
+  }
+
+  d = boxIntersection(ro - vec3(0., 0., 6.), rd, vec3(6., 10., 0.1), tempN);
+  tempMat = vec4(.8, .8, .8, .01);
+  if(minDist(minD, d)) {
+    mat = tempMat;
+    minD = d;
+    n = tempN;
+  }
+
+  d = boxIntersection(ro - vec3(0., 0., -10.), rd, vec3(6., 10., 0.1), tempN);
+  tempMat = vec4(.8, .8, .8, .01);
+  if(minDist(minD, d)) {
+    mat = tempMat;
+    minD = d;
+    n = tempN;
+  }
+
+  d = boxIntersection(ro - vec3(0., 10., 0.), rd, vec3(6., 0.1, 11.), tempN);
+  tempMat = vec4(.9, .9, .9, -3.);
+  if(minDist(minD, d)) {
+    mat = tempMat;
+    minD = d;
+    n = tempN;
+  }
+
+  d = boxIntersection(ro - vec3(1.5, 1.29, 2.), rd, vec3(1.3), tempN);
+  tempMat = vec4(.9, .9, .9, 0.95);
+  if(minDist(minD, d)) {
+    mat = tempMat;
+    minD = d;
+    n = tempN;
+  }
+
+  d = sphIntersect(ro - vec3(-2.5, 3., 2.), rd, .5);
+  tempMat = vec4(.63, .13, .95, -2000.);
+  if(minDist(minD, d)) {
+    mat = tempMat;
+    minD = d;
+    n = normalize(ro + rd * d.x - vec3(-2.5, 3., 2.));
+  }
+
+  d = sphIntersect(ro - vec3(-1.5, 1., 0.), rd, 1.);
   tempMat = vec4(.8, .1, .1, -2.);
   if(minDist(minD, d)) {
     mat = tempMat;
     minD = d;
-    n = normalize(ro + rd * d.x - vec3(1., 0., 2.));
+    n = normalize(ro + rd * d.x - vec3(-1.5, 1., 0.));
   }
 
-  d = boxIntersection(ro - vec3(4., 0., 5.), rd, vec3(1.), tempN);
-  tempMat = vec4(.65, .3, .47, -2.);
-  if(minDist(minD, d)) {
-    mat = tempMat;
-    minD = d;
-    n = tempN;
-  }
-
-  d = boxIntersection(ro - vec3(8., 0., 5.), rd, vec3(1.), tempN);
-  tempMat = vec4(.65, .3, .47, -1.);
-  if(minDist(minD, d)) {
-    mat = tempMat;
-    minD = d;
-    n = tempN;
-  }
+  // vec3 pos = ro - vec3(-2., 1.5, 1.); // Fractal object
+  // for(int i = 0; i < 100 ; i++){
+  //   float dist = mbintersect(pos);
+  //   if(dist < CORRECTION) break;
+  //   pos += dist*rd * 0.5;
+  // }
+  // for(int i = 0; i < 2; i++){
+  //   float dist = mbintersect(pos)-CORRECTION;
+  //   pos += dist*rd;
+  // }
+  // d = vec2(length(pos - ro + vec3(-2., 1.5, 1.)));
+  // tempMat = vec4(.7, .7, .6, 0.1);
+  // if(minDist(minD, d)) {
+  //   mat = tempMat;
+  //   minD = d;
+  //   n = nor(pos);
+  // }
 
   rayMat(ro, rd, n, minD, col, mat, float(rand));
 
@@ -154,7 +245,7 @@ vec2 map(out vec3 ro, out vec3 rd, out vec3 col, int rand) {
 }
 
 vec3 getSky(in vec3 rd) {
-  return vec3(0.31, 0.63, 0.98) * 0.01 + vec3(pow(max(dot(rd, light), 0.), 128.)) * 10.;
+  return vec3(0.31, 0.63, 0.98) * 0.0001 + vec3(pow(max(dot(rd, light), 0.), 128.)) * 1.; // Sky and sun, increase multipliers to switch between day and night
 }
 
 vec3 traceRay(in vec3 ro, in vec3 rd, int rand) {
@@ -173,7 +264,7 @@ vec3 traceRay(in vec3 ro, in vec3 rd, int rand) {
 
 void main() {
 
-  vec2 iResolution = vec2(600, 600);
+  vec2 iResolution = vec2(1900, 1200);
 
   vec2 uv = (gl_FragCoord.xy - .5 * iResolution.xy) / iResolution.y;
 
@@ -211,13 +302,13 @@ void main() {
   vec3 i = c + uv.x * r + uv.y * u;
   vec3 rd = i - ro;
 
-  const int numSamples = 256;
+  const int numSamples = 4; // Increase this value to get better picture
   for(int i = 0; i < numSamples; i++) {
     col += traceRay(ro, normalize(rd), i);
   }
   col /= vec3(numSamples);
 
-  float white = 1.0; // gamma correction
+  float white = 20.0; // gamma correction
   col *= white * 16.0;
   col = (col * (1.0 + col / white / white)) / (1.0 + col);
 
@@ -243,6 +334,7 @@ let program = createProgram(gl, vertexShader, fragmentShader);
 var positionLocation = gl.getAttribLocation(program, "position");
 const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
 const timeAttributeLocation = gl.getUniformLocation(program, "time");
+const randomAttributeLocation = gl.getUniformLocation(program, "randF");
 const camPositionAttributeLocation = gl.getUniformLocation(program, "camPos");
 const camDirectionAttributeLocation = gl.getUniformLocation(program, "camDir");
 const isMovingAttributeLocation = gl.getUniformLocation(program, "isMoving");
@@ -313,13 +405,13 @@ if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !==
 var fps = 60;
 
 var time = 0;
-var camPos = [0.0, 1.0, 0.0];
+var camPos = [0, 1.5, -6.]; // Initial camera position
 var vsd = [false, false, false, false, false, false]; // w s a d crtl shift
 var camDir = [0.0, 0.0]; // x y angles
 var prevCamDir = [0.0, 0.0];
-var sensitiveness = 0.001;
+var sensitiveness = 0.001; // Mouse sensitiveness
 var curX = 0, curY = 0;
-let sens = 10;
+let sens = 10; // Also mouse sensitiveness
 var isMoving = 0;
 let framesStill = 0;
 
@@ -355,7 +447,8 @@ function updatePosition(e) {
   curY += e.movementY;
 }
 
-var last = 0; // timestamp of the last render() call
+var last = 0;
+var maxFrames = 50; // timestamp of the last render() call
 function render(now) {
   // each 2 seconds call the createNewObject() function
   if (!last || now - last >= 1000 / fps) {
@@ -363,6 +456,16 @@ function render(now) {
     renderScene();
   }
   requestAnimationFrame(render);
+}
+
+function renderFullScene(now) {
+  // each 2 seconds call the createNewObject() function
+  if (maxFrames > last) {
+    renderScene();
+  }
+  last++;
+  console.log(last);
+  requestAnimationFrame(renderFullScene);
 }
 
 function renderScene() {
@@ -385,6 +488,7 @@ function renderScene() {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
   gl.uniform1f(timeAttributeLocation, time);
+  gl.uniform1f(randomAttributeLocation, Math.random());
   isMoving = 0;
 
   document.onkeydown = function (e) {
@@ -510,4 +614,5 @@ function resizeCanvasToDisplaySize(canvas, multiplier) {
   return false;
 }
 
-requestAnimationFrame(render);
+requestAnimationFrame(render); // Switch between static and dynamic render
+// requestAnimationFrame(renderFullScene);

@@ -2,8 +2,8 @@ body {
     margin: 0;
   }
   canvas {
-    width: 600px;
-    height: 600px;
+    width: 1900px;
+    height: 1200px;
     offset: 0;
     cursor: none;
   }
